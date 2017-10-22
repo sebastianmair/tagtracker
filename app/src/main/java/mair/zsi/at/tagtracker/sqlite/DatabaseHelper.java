@@ -49,7 +49,7 @@ public class DatabaseHelper extends OrmLiteSqliteOpenHelper {
     private static final String TAGTRACK_TAG_ID = "tag_id";
     private static final String TAGTRACK_TRACK_ID = "track_id";
 
-    public DatabaseHandler(Context context) {
+    public DatabaseHelper(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
     }
 
@@ -58,29 +58,12 @@ public class DatabaseHelper extends OrmLiteSqliteOpenHelper {
 
         try {
             TableUtils.createTable(connectionSource, Tag.class);
-            TableUtils.clearTable(connectionSource, Track.class);
+            TableUtils.createTable(connectionSource, Track.class);
             TableUtils.createTable(connectionSource, TagTrack.class);
         } catch (SQLException e) {
+            throw new RuntimeException(e.getMessage());
             // TODO: do smth.
         }
-
-        /*// Drop older table if existed
-        String CREATE_TAG_TABLE = "CREATE TABLE %s (%s INTEGER PRIMARY KEY, %s VARCHAR(255));"
-                .format(TAG_TABLE_NAME, TAG_ID, TAG_NAME);
-        db.execSQL(CREATE_TAG_TABLE);
-
-        String CREATE_TRACK_TABLE = "CREATE TABLE %s (%s INTEGER PRIMARY KEY, %s DOUBLE, %s DOUBLE, %s DATETIME);"
-                .format(TRACK_TABLE_NAME, TRACK_ID, TRACK_LON, TRACK_LAT, TRACK_DATE);
-        db.execSQL(CREATE_TRACK_TABLE);
-
-        String CREATE_TAG_TRACK_TABLE = ("CREATE TABLE %s (%s INTEGER NOT NULL, %s INTEGER NOT NULL, " +
-                "FOREIGN KEY(%s) REFERENCES %s(%s), FOREIGN KEY(%s) REFERENCES %s(%s), " +
-                " PRIMARY KEY (%s, %s))")
-                .format(TAG_TRACK_TABLE_NAME, TAGTRACK_TAG_ID, TAGTRACK_TRACK_ID,
-                        TAGTRACK_TAG_ID, TAG_TABLE_NAME, TAG_ID,
-                        TAGTRACK_TRACK_ID, TRACK_TABLE_NAME, TRACK_ID,
-                        TAGTRACK_TAG_ID, TAGTRACK_TRACK_ID);
-        db.execSQL(CREATE_TAG_TRACK_TABLE);*/
     }
 
     @Override
@@ -92,17 +75,9 @@ public class DatabaseHelper extends OrmLiteSqliteOpenHelper {
             TableUtils.dropTable(connectionSource, Tag.class, true);
             TableUtils.dropTable(connectionSource, Track.class, true);
         } catch (SQLException e) {
+            throw new RuntimeException(e.getMessage());
             // TODO: do smth.
         }
-        /*
-        // Drop older table if existed
-        db.execSQL("DROP TABLE IF EXISTS " + TAG_TRACK_TABLE_NAME);
-        db.execSQL("DROP TABLE IF EXISTS " + TRACK_TABLE_NAME);
-        db.execSQL("DROP TABLE IF EXISTS " + TAG_TABLE_NAME);
-
-        // Create tables again
-        onCreate(db);
-        */
     }
 
     public Dao<Tag, Integer> getTagDao() throws SQLException {

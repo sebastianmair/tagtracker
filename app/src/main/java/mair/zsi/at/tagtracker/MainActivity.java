@@ -17,6 +17,8 @@ package mair.zsi.at.tagtracker;
 
 import android.app.Activity;
 import android.content.Context;
+import android.location.Location;
+import android.location.LocationManager;
 import android.os.Bundle;
 import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.Snackbar;
@@ -26,73 +28,80 @@ import android.view.View;
 import android.support.design.widget.NavigationView;
 import android.support.v4.view.GravityCompat;
 import android.support.v4.widget.DrawerLayout;
-import android.support.v7.app.ActionBarDrawerToggle;
-import android.support.v7.app.AppCompatActivity;
-import android.support.v7.widget.Toolbar;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ListView;
 import android.widget.Toast;
 
+import com.j256.ormlite.android.apptools.OrmLiteBaseActivity;
+import com.j256.ormlite.stmt.PreparedQuery;
+import com.j256.ormlite.stmt.QueryBuilder;
+
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.sql.SQLException;
+
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Date;
 import java.util.List;
 
-public class MainActivity extends AppCompatActivity
+import mair.zsi.at.tagtracker.entities.Tag;
+import mair.zsi.at.tagtracker.entities.TagTrack;
+import mair.zsi.at.tagtracker.entities.Track;
+import mair.zsi.at.tagtracker.sqlite.DatabaseHelper;
+import mair.zsi.at.tagtracker.utils.GPSTracker;
+import mair.zsi.at.tagtracker.utils.TagArrayAdapter;
+
+public class MainActivity extends OrmLiteBaseActivity<DatabaseHelper> //AppCompatActivity
         implements NavigationView.OnNavigationItemSelectedListener {
 
-    private ArrayList<String> list;
-    private ArrayAdapter<String> adapter;
+    private GPSTracker gpsTracker;
+    private List<Tag> tags;
+    private TagArrayAdapter adapter;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
 
-        DrawerLayout drawer = (DrawerLayout) findViewById(R.id.drawer_layout);
-        ActionBarDrawerToggle toggle = new ActionBarDrawerToggle(
-                this, drawer, toolbar, R.string.navigation_drawer_open, R.string.navigation_drawer_close);
-        drawer.setDrawerListener(toggle);
-        toggle.syncState();
+        super.onCreate(savedInstanceState);
+
+        setContentView(R.layout.activity_main);
 
         NavigationView navigationView = (NavigationView) findViewById(R.id.nav_view);
         navigationView.setNavigationItemSelectedListener(this);
 
+        gpsTracker = new GPSTracker(getApplicationContext());
 
-        final ListView listview = (ListView) findViewById(R.id.recentTagList);
-        String[] values = new String[] { "Android", "iPhone", "WindowsMobile",
-                "Blackberry", "WebOS", "Ubuntu", "Windows7", "Max OS X",
-                "Linux", "OS/2", "Ubuntu", "Windows7", "Max OS X", "Linux",
-                "OS/2", "Ubuntu", "Windows7", "Max OS X", "Linux", "OS/2",
-                "Android", "iPhone", "WindowsMobile" };
-
-        list = new ArrayList<String>();
-        for (int i = 0; i < values.length; ++i) {
-            list.add(values[i]);
+        // ok load all tags from the database
+        try {
+            tags = getHelper().getTagDao().queryForAll();
+        } catch (SQLException e) {
+            throw new RuntimeException("Could not lookup tags in the database", e);
         }
 
-        adapter = new ArrayAdapter<String>(this,
-                android.R.layout.simple_list_item_1, list);
-
+        // load them into the listview
+        final ListView listview = (ListView) findViewById(R.id.recentTagList);
+        adapter = new TagArrayAdapter(this, tags);
         listview.setAdapter(adapter);
 
+        // on click, change order of list items.
         listview.setOnItemClickListener(new AdapterView.OnItemClickListener() {
 
             @Override
             public void onItemClick(AdapterView<?> parent, final View view,
                                     int position, long id) {
-                final String item = (String) parent.getItemAtPosition(position);
+                final Tag item = (Tag) parent.getItemAtPosition(position);
                 view.animate().setDuration(2000).alpha(0)
                         .withEndAction(new Runnable() {
                             @Override
                             public void run() {
-                                list.remove(item);
-                                list.add(0, item);
+
+                                addTrack(item);
+                                tags.remove(item);
+                                tags.add(0, item);
+                                adapter.clear();
+                                adapter.addAll(tags);
                                 adapter.notifyDataSetChanged();
                                 view.setAlpha(1);
                             }
@@ -105,20 +114,32 @@ public class MainActivity extends AppCompatActivity
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                EditText editText = (EditText)findViewById(R.id.tagName);
+                EditText editText = (EditText) findViewById(R.id.tagName);
                 String newTagName = editText.getText().toString();
+                Tag newTag = new Tag(newTagName);
 
-                list.add(0, newTagName);
+                try {
+                    getHelper().getTagDao().create(newTag);
+                    tags.add(0, newTag);
+                    addTrack(newTag);
+                } catch (SQLException e) {
+                    throw new RuntimeException("Could add tag to the database", e);
+                }
+
+                adapter.clear();
+                adapter.addAll(tags);
                 adapter.notifyDataSetChanged();
 
-                Snackbar.make(view, "Added "+newTagName, Snackbar.LENGTH_LONG)
+                editText.setText("");
+
+                Snackbar.make(view, "Added " + newTagName, Snackbar.LENGTH_LONG)
                         .setAction("Action", null).show();
 
                 view.setAlpha(1);
             }
         });
 
-        EditText ed = (EditText)findViewById(R.id.tagName);
+        EditText ed = (EditText) findViewById(R.id.tagName);
         //ed.addTextChangedListener(new MyTextWatcher(ed));
         ed.addTextChangedListener(new TextWatcher() {
             @Override
@@ -128,13 +149,46 @@ public class MainActivity extends AppCompatActivity
 
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
-                Toast.makeText(getActivity(), String.format("Hi, %s !", s.toString()), Toast.LENGTH_SHORT).show();
+                try {
+                    QueryBuilder<Tag, Integer> qb = getHelper().getTagDao().queryBuilder();
+                    qb.where().like("name", "%" + s.toString() + "%");
+                    PreparedQuery<Tag> pq = qb.prepare();
+                    tags = getHelper().getTagDao().query(pq);
+                } catch (SQLException e) {
+                    throw new RuntimeException("Could not lookup Tag in the database", e);
+                }
+
+                adapter.clear();
+                adapter.addAll(tags);
+
+                adapter.notifyDataSetChanged();
+                //Toast.makeText(getActivity(), "search for: "+s.toString()+" found: "+tags.toString(), Toast.LENGTH_LONG).show();
             }
 
             @Override
             public void afterTextChanged(Editable s) {
             }
         });
+    }
+
+    public void addTrack(Tag tag) {
+        try {
+            Location loc = gpsTracker.getLocation();
+            // create track
+            Track track = new Track(loc.getLongitude(), loc.getLatitude(),new Date());
+
+            if (tag == null) {
+                getHelper().getTrackDao().create(track);
+                TagTrack tagtrack = new TagTrack(tag, track);
+                getHelper().getTagTrackDao().create(tagtrack);
+            } else {
+                getHelper().getTrackDao().create(track);
+            }
+
+            Toast.makeText(getApplicationContext(), "added a new track, lat: "+track.getLat()+", lon: "+track.getLon()+", date: "+track.getDate().toString(), Toast.LENGTH_SHORT).show();
+        } catch (SQLException e) {
+            throw new RuntimeException(e.getMessage());
+        }
     }
 
     public Activity getActivity() {
@@ -152,31 +206,6 @@ public class MainActivity extends AppCompatActivity
         adapter.notifyDataSetChanged();
     }
 */
-    /*private class StableArrayAdapter extends ArrayAdapter<String> {
-
-        HashMap<String, Integer> mIdMap = new HashMap<String, Integer>();
-
-        public StableArrayAdapter(Context context, int textViewResourceId,
-                                  List<String> objects) {
-            super(context, textViewResourceId, objects);
-            for (int i = 0; i < objects.size(); ++i) {
-                mIdMap.put(objects.get(i), i);
-            }
-        }
-
-        @Override
-        public long getItemId(int position) {
-            String item = getItem(position);
-            return mIdMap.get(item);
-        }
-
-        @Override
-        public boolean hasStableIds() {
-            return true;
-        }
-
-    }*/
-
 
     @Override
     public void onBackPressed() {
